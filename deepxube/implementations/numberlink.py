@@ -90,7 +90,7 @@ class NumberLinkDeepXubeEnv(EnvStartGoalRW[NumberLinkState, NumberLinkAction, Nu
         states = []
         for i in range(num_states):
             state = NumberLinkState(
-                grid=env._grid[i],
+                grid=env.envs[i]._grid,
                 grid_codes=env._grid_codes[i],
                 lane_v=env._lane_v[i],
                 lane_h=env._lane_h[i],
@@ -121,9 +121,10 @@ class NumberLinkDeepXubeEnv(EnvStartGoalRW[NumberLinkState, NumberLinkAction, Nu
             generator=GeneratorConfig(width=self.width, height=self.height, colors=self.num_colors),
             variant=VariantConfig(cell_switching_mode=True)
         )
+        env.reset()
 
-        env._grid = [s.grid for s in states]
         for i, state in enumerate(states):
+            env.envs[i]._grid = state.grid
             env._grid_codes[i] = state.grid_codes
             env._lane_v[i] = state.lane_v
             env._lane_h[i] = state.lane_h
@@ -142,7 +143,7 @@ class NumberLinkDeepXubeEnv(EnvStartGoalRW[NumberLinkState, NumberLinkAction, Nu
         next_states = []
         for i in range(len(states)):
             next_states.append(NumberLinkState(
-                grid=env._grid[i],
+                grid=env.envs[i]._grid,
                 grid_codes=env._grid_codes[i],
                 lane_v=env._lane_v[i],
                 lane_h=env._lane_h[i],
