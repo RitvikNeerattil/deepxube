@@ -1,25 +1,34 @@
-from typing import List, Tuple, Optional, Any
-
-import numpy as np
+from typing import List, Optional
 import random
+import numpy as np
 from numpy.typing import NDArray
+
 import torch
 from torch import Tensor
-import torch.nn as nn
 
 from deepxube.base.env import Action, EnvEnumerableActs, EnvStartGoalRW, Goal, State
 from deepxube.base.heuristic import HeurNNetModule, HeurNNetV
 from deepxube.nnet.pytorch_models import Conv2dModel, FullyConnectedModel
+
 from numberlink.config import GeneratorConfig, VariantConfig
 from numberlink.vector_env import NumberLinkRGBVectorEnv
 
 
-class NumberLinkState(State):
-    """State for the NumberLink environment."""
+# =========================
+# ======== STATE ==========
+# =========================
 
-    def __init__(self, grid: Any, grid_codes: NDArray[np.uint8], lane_v: NDArray[np.uint8], lane_h: NDArray[np.uint8],
-                 closed: NDArray[np.bool_], steps: int):
-        self.grid = grid
+class NumberLinkState(State):
+    __slots__ = ("grid_codes", "lane_v", "lane_h", "closed", "steps", "_hash")
+
+    def __init__(
+        self,
+        grid_codes: NDArray[np.uint8],
+        lane_v: NDArray[np.uint8],
+        lane_h: NDArray[np.uint8],
+        closed: NDArray[np.bool_],
+        steps: int,
+    ):
         self.grid_codes = grid_codes
         self.lane_v = lane_v
         self.lane_h = lane_h
@@ -27,226 +36,229 @@ class NumberLinkState(State):
         self.steps = steps
         self._hash: Optional[int] = None
 
-    def __hash__(self) -> int:
+    def __hash__(self):
         if self._hash is None:
-            self._hash = hash((self.grid_codes.tobytes(), self.lane_v.tobytes(), self.lane_h.tobytes(), self.closed.tobytes()))
+            self._hash = hash((
+                self.grid_codes.tobytes(),
+                self.lane_v.tobytes(),
+                self.lane_h.tobytes(),
+                self.closed.tobytes(),
+            ))
         return self._hash
 
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, NumberLinkState):
-            return False
-        return (np.array_equal(self.grid_codes, other.grid_codes) and
-                np.array_equal(self.lane_v, other.lane_v) and
-                np.array_equal(self.lane_h, other.lane_h) and
-                np.array_equal(self.closed, other.closed))
+    def __eq__(self, other):
+        return (
+            isinstance(other, NumberLinkState)
+            and np.array_equal(self.grid_codes, other.grid_codes)
+            and np.array_equal(self.lane_v, other.lane_v)
+            and np.array_equal(self.lane_h, other.lane_h)
+            and np.array_equal(self.closed, other.closed)
+        )
 
+
+# =========================
+# ======= ACTION ==========
+# =========================
 
 class NumberLinkAction(Action):
-    """Action for the NumberLink environment."""
+    __slots__ = ("action",)
 
     def __init__(self, action: int):
-        self.action = action
+        self.action = int(action)
 
-    def __hash__(self) -> int:
-        return hash(self.action)
+    def __hash__(self):
+        return self.action
 
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, NumberLinkAction):
-            return False
-        return self.action == other.action
-
-    def __repr__(self) -> str:
-        return f"NumberLinkAction({self.action})"
+    def __eq__(self, other):
+        return isinstance(other, NumberLinkAction) and self.action == other.action
 
 
 class NumberLinkGoal(Goal):
-    """Goal for the NumberLink environment."""
     pass
 
 
-class NumberLinkDeepXubeEnv(EnvStartGoalRW[NumberLinkState, NumberLinkAction, NumberLinkGoal], EnvEnumerableActs):
-    def __init__(self, width: int = 7, height: int = 7, num_colors: int = 5):
+# =========================
+# ===== ENVIRONMENT =======
+# =========================
+
+class NumberLinkDeepXubeEnv(
+    EnvStartGoalRW[NumberLinkState, NumberLinkAction, NumberLinkGoal],
+    EnvEnumerableActs,
+):
+    def __init__(self, width=7, height=7, num_colors=5):
         super().__init__()
         self.width = width
         self.height = height
         self.num_colors = num_colors
 
-        # Create a template env to get parameters
-        self.template_env = NumberLinkRGBVectorEnv(
+        tmp = NumberLinkRGBVectorEnv(
             num_envs=1,
-            generator=GeneratorConfig(width=width, height=height, colors=num_colors),
-            variant=VariantConfig(cell_switching_mode=True)
+            generator=GeneratorConfig(
+                width=width,
+                height=height,
+                colors=num_colors,
+            ),
+            variant=VariantConfig(cell_switching_mode=True),
         )
-        self.action_size = self.template_env.single_action_space.n
+        self.action_size = tmp.single_action_space.n
 
-    def get_start_states(self, num_states: int) -> List[NumberLinkState]:
+    def get_start_states(self, n):
         env = NumberLinkRGBVectorEnv(
-            num_envs=num_states,
-            generator=GeneratorConfig(width=self.width, height=self.height, colors=self.num_colors),
-            variant=VariantConfig(cell_switching_mode=True)
-        )
-        obs, info = env.reset()
-        
-        states = []
-        for i in range(num_states):
-            state = NumberLinkState(
-                grid=env.envs[i]._grid,
-                grid_codes=env._grid_codes[i],
-                lane_v=env._lane_v[i],
-                lane_h=env._lane_h[i],
-                closed=env._closed[i],
-                steps=env._step_count[i]
-            )
-            states.append(state)
-        return states
-
-    def sample_goal(self, states_start: List[NumberLinkState], states_goal: List[NumberLinkState]) -> List[NumberLinkGoal]:
-        return [NumberLinkGoal() for _ in states_start]
-
-    def get_state_actions(self, states: List[NumberLinkState]) -> List[List[NumberLinkAction]]:
-        actions: List[List[NumberLinkAction]] = []
-        # Create a temporary env to get action mask
-        env = self._create_env_from_states(states)
-        action_masks = env._compute_action_mask()
-
-        for i in range(len(states)):
-            valid_actions_indices = np.flatnonzero(action_masks[i])
-            actions.append([NumberLinkAction(int(a)) for a in valid_actions_indices])
-        return actions
-
-    def _create_env_from_states(self, states: List[NumberLinkState]) -> NumberLinkRGBVectorEnv:
-        num_envs = len(states)
-        env = NumberLinkRGBVectorEnv(
-            num_envs=num_envs,
-            generator=GeneratorConfig(width=self.width, height=self.height, colors=self.num_colors),
-            variant=VariantConfig(cell_switching_mode=True)
+            num_envs=n,
+            generator=GeneratorConfig(
+                width=self.width,
+                height=self.height,
+                colors=self.num_colors,
+            ),
+            variant=VariantConfig(cell_switching_mode=True),
         )
         env.reset()
 
-        for i, state in enumerate(states):
-            env.envs[i]._grid = state.grid
-            env._grid_codes[i] = state.grid_codes
-            env._lane_v[i] = state.lane_v
-            env._lane_h[i] = state.lane_h
-            env._closed[i] = state.closed
-            env._step_count[i] = state.steps
-        
-        return env
+        return [
+            NumberLinkState(
+                env._grid_codes[i].copy(),
+                env._lane_v[i].copy(),
+                env._lane_h[i].copy(),
+                env._closed[i].copy(),
+                int(env._step_count[i]),
+            )
+            for i in range(n)
+        ]
 
-    def next_state(self, states: List[NumberLinkState], actions: List[NumberLinkAction]) -> Tuple[List[NumberLinkState], List[float]]:
-        env = self._create_env_from_states(states)
-        
-        np_actions = np.array([a.action for a in actions], dtype=int)
-        
-        obs, rewards, terminated, truncated, info = env.step(np_actions)
-        
-        next_states = []
-        for i in range(len(states)):
-            next_states.append(NumberLinkState(
-                grid=env.envs[i]._grid,
-                grid_codes=env._grid_codes[i],
-                lane_v=env._lane_v[i],
-                lane_h=env._lane_h[i],
-                closed=env._closed[i],
-                steps=env._step_count[i]
-            ))
-            
-        return next_states, [-r for r in rewards]
+    def sample_goal(self, states_start, states_goal):
+        return [NumberLinkGoal() for _ in states_start]
 
-    def is_solved(self, states: List[NumberLinkState], goals: List[NumberLinkGoal]) -> List[bool]:
-        env = self._create_env_from_states(states)
+    def get_state_actions(self, states):
+        env = self._env_from_states(states)
+        masks = env._compute_action_mask()
+        return [
+            [NumberLinkAction(a) for a in np.flatnonzero(masks[i])]
+            for i in range(len(states))
+        ]
+
+    def get_state_action_rand(self, states):
+        return [
+            random.choice(a) if a else NumberLinkAction(0)
+            for a in self.get_state_actions(states)
+        ]
+
+    def next_state(self, states, actions):
+        env = self._env_from_states(states)
+        act = np.array([a.action for a in actions], dtype=np.int64)
+        _, rewards, _, _, _ = env.step(act)
+
+        return (
+            [
+                NumberLinkState(
+                    env._grid_codes[i].copy(),
+                    env._lane_v[i].copy(),
+                    env._lane_h[i].copy(),
+                    env._closed[i].copy(),
+                    int(env._step_count[i]),
+                )
+                for i in range(len(states))
+            ],
+            [-float(r) for r in rewards],
+        )
+
+    def is_solved(self, states, goals):
+        env = self._env_from_states(states)
         return list(env._compute_solved_mask())
 
-    def get_state_action_rand(self, states: List[NumberLinkState]) -> List[NumberLinkAction]:
-        state_actions_l = self.get_state_actions(states)
-        return [random.choice(state_actions) if state_actions else NumberLinkAction(0) for state_actions in state_actions_l]
+    def _env_from_states(self, states):
+        env = NumberLinkRGBVectorEnv(
+            num_envs=len(states),
+            generator=GeneratorConfig(
+                width=self.width,
+                height=self.height,
+                colors=self.num_colors,
+            ),
+            variant=VariantConfig(cell_switching_mode=True),
+        )
+        env.reset()
+        for i, s in enumerate(states):
+            env._grid_codes[i] = s.grid_codes
+            env._lane_v[i] = s.lane_v
+            env._lane_h[i] = s.lane_h
+            env._closed[i] = s.closed
+            env._step_count[i] = s.steps
+        return env
+
+
+# =========================
+# ======= NETWORK =========
+# =========================
 
 class NumberLinkNNet(HeurNNetModule):
-    def __init__(self, width: int, height: int, num_colors: int, device: str = "cpu"):
+    def __init__(self, width, height, device):
         super().__init__()
-        
-        # The input will have 4 channels: grid_codes, lane_v, lane_h, closed
-        input_channels = 4
-        
-        self.conv_layers = Conv2dModel(
-            chan_in=input_channels,
+
+        self.conv = Conv2dModel(
+            chan_in=4,
             channel_sizes=[32, 64],
             kernel_sizes=[3, 3],
             paddings=[1, 1],
             layer_acts=["RELU", "RELU"],
-            batch_norms=[True, True]
+            batch_norms=[True, True],
         )
-        
-        # Calculate the size of the flattened features after conv layers
-        conv_output_size = self._get_conv_output_size(width, height, input_channels)
 
-        self.fc_layers = FullyConnectedModel(
-            input_dim=conv_output_size,
-            dims=[128, 1],
-            acts=["RELU", "LINEAR"]
-        )
+        with torch.no_grad():
+            dummy = torch.zeros(1, 4, height, width)
+            out_dim = self.conv(dummy).flatten(1).shape[1]
+
+        self.fc = FullyConnectedModel(out_dim, [128, 1], ["RELU", "LINEAR"])
         self.to(device)
 
-    def _get_conv_output_size(self, width: int, height: int, channels: int) -> int:
-        # Helper to calculate the output size of the conv layers
-        with torch.no_grad():
-            dummy_input = torch.zeros(1, channels, height, width)
-            output = self.conv_layers(dummy_input)
-            return output.flatten(1).shape[1]
-
     def forward(self, states_goals_l: List[Tensor]) -> Tensor:
-        # states_goals_l[0] is the state tensor
-        state_tensor = states_goals_l[0]
-        
-        # The input is expected to be (batch, channels, height, width)
-        x = self.conv_layers(state_tensor)
+        x = self.conv(states_goals_l[0])
         x = x.flatten(1)
-        x = self.fc_layers(x)
-        return x
+        return self.fc(x)
+
 
 class NumberLinkNNetParV(HeurNNetV[NumberLinkState, NumberLinkGoal]):
-    def __init__(self, width: int, height: int, num_colors: int, device: str = "cpu"):
+    def __init__(self, width, height, num_colors=None, device="cuda"):
         super().__init__()
         self.width = width
         self.height = height
-        self.num_colors = num_colors
-        self.device = device
+        self.device = torch.device("cuda" if device == "cuda" else "cpu")
+        self.on_gpu = self.device.type == "cuda"  # REQUIRED
 
-    def get_nnet(self) -> HeurNNetModule:
-        return NumberLinkNNet(self.width, self.height, self.num_colors, self.device)
+    def get_nnet(self):
+        return NumberLinkNNet(self.width, self.height, self.device)
 
-    def to_np(self, states: List[NumberLinkState], goals: List[NumberLinkGoal]) -> List[NDArray[Any]]:
-        # Stack the grid representations from each state
-        # The state is represented by grid_codes, lane_v, and lane_h
-        # We stack them as channels of an image-like tensor
-        
-        batch_size = len(states)
-        
-        # Initialize numpy arrays for each channel
-        grid_codes_np = np.zeros((batch_size, self.height, self.width), dtype=np.float32)
-        lane_v_np = np.zeros((batch_size, self.height, self.width), dtype=np.float32)
-        lane_h_np = np.zeros((batch_size, self.height, self.width), dtype=np.float32)
-        closed_np = np.zeros((batch_size, self.height, self.width), dtype=np.float32)
-        
-        for i, state in enumerate(states):
-            grid_codes_np[i] = state.grid_codes
-            lane_v_np[i] = state.lane_v
-            lane_h_np[i] = state.lane_h
+    def to_torch(self, states, goals):
+        B = len(states)
 
-            closed_channel = np.zeros((self.height, self.width), dtype=np.float32)
-            for color_idx, is_closed in enumerate(state.closed):
-                if is_closed:
-                    color_code = color_idx + 1
-                    closed_channel[state.grid_codes == color_code] = 1.0
-                    closed_channel[state.lane_v == color_code] = 1.0
-                    closed_channel[state.lane_h == color_code] = 1.0
-            closed_np[i] = closed_channel
+        grid = torch.zeros((B, self.height, self.width), device=self.device)
+        lv = torch.zeros_like(grid)
+        lh = torch.zeros_like(grid)
+        closed = torch.zeros_like(grid)
 
-        # Stack the channels to form a (batch, channels, height, width) tensor
-        states_np = np.stack([grid_codes_np, lane_v_np, lane_h_np, closed_np], axis=1)
-        
-        # Goals are not used in this simple V-function network, but the interface requires it.
-        # We can pass a dummy array.
-        goals_np = np.zeros(batch_size, dtype=np.float32)
+        for i, s in enumerate(states):
+            grid[i] = torch.from_numpy(s.grid_codes).to(self.device, non_blocking=True)
+            lv[i] = torch.from_numpy(s.lane_v).to(self.device, non_blocking=True)
+            lh[i] = torch.from_numpy(s.lane_h).to(self.device, non_blocking=True)
 
-        return [states_np, goals_np]
+            for c, done in enumerate(s.closed):
+                if done:
+                    code = c + 1
+                    mask = (
+                        (grid[i] == code)
+                        | (lv[i] == code)
+                        | (lh[i] == code)
+                    )
+                    closed[i][mask] = 1.0
+
+        x = torch.stack([grid, lv, lh, closed], dim=1)
+        goals_t = torch.zeros((B,), device=self.device)
+
+        return [x, goals_t]
+
+    # 🔴 REQUIRED BY ABSTRACT BASE CLASS
+    def to_np(self, states, goals):
+        """
+        Only used if DeepXube explicitly requests NumPy.
+        Safe fallback that does NOT disable GPU mode.
+        """
+        tensors = self.to_torch(states, goals)
+        return [t.detach().cpu().numpy() for t in tensors]
