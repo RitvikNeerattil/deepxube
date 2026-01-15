@@ -118,10 +118,9 @@ def nnet_in_out_shared_q(nnet: nn.Module, inputs_nnet_shm: List[SharedNDArray], 
     outputs: NDArray[np.float64] = nnet_batched(nnet, inputs_nnet, batch_size, device)
 
     # send outputs
-    outputs_shm: SharedNDArray = np_to_shnd(outputs)
-    nnet_o_q.put(outputs_shm)
+    nnet_o_q.put(outputs)
 
-    for arr_shm in inputs_nnet_shm + [outputs_shm]:
+    for arr_shm in inputs_nnet_shm:
         arr_shm.close()
 
 
@@ -214,10 +213,9 @@ def get_nnet_par_out(inputs_nnet: List[NDArray], nnet_par_info: NNetParInfo) -> 
 
     nnet_par_info.nnet_i_q.put((nnet_par_info.proc_id, inputs_nnet_shm))
 
-    out_shm: SharedNDArray = nnet_par_info.nnet_o_q.get()
-    out: NDArray = out_shm.array.copy()
+    out: NDArray = nnet_par_info.nnet_o_q.get()
 
-    for arr_shm in inputs_nnet_shm + [out_shm]:
+    for arr_shm in inputs_nnet_shm:
         arr_shm.close()
         arr_shm.unlink()
 

@@ -61,9 +61,9 @@ def _put_from_q(data_l: List[List[NDArray]], from_q: Queue, times: Times) -> Non
 
     from_q.put(data_shm_l)
 
-    for data_shm in data_shm_l:
-        for arr_shm in data_shm:
-            arr_shm.close()
+    # for data_shm in data_shm_l:
+    #     for arr_shm in data_shm:
+    #         arr_shm.close()
 
     times.record_time("put", time.time() - start_time)
 

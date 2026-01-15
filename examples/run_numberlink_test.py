@@ -1,4 +1,4 @@
-from deepxube.base.env import NumberLinkDeepXubeEnv
+from deepxube.implementations.numberlink import NumberLinkDeepXubeEnv
 from deepxube.tests.test_env import test_env
 from argparse import ArgumentParser
 
