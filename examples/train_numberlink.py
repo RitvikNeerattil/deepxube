@@ -30,7 +30,7 @@ def main():
 
     # Updater args
     parser.add_argument('--step_max', type=int, required=True, help="Maximum number of steps for random walks")
-    parser.add_argument('--up_itrs', type=int, default=1000, help="Updater iterations")
+    parser.add_argument('--up_itrs', type=int, default=100, help="Updater iterations")
     parser.add_argument('--up_gen_itrs', type=int, default=100, help="Updater generation iterations")
     parser.add_argument('--up_procs', type=int, default=1, help="Number of processes for the updater")
     parser.add_argument('--up_search_itrs', type=int, default=100, help="Updater search iterations")

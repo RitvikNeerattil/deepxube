@@ -28,7 +28,7 @@ class NumberLinkState(State):
 
     def __hash__(self) -> int:
         if self._hash is None:
-            self._hash = hash((self.grid_codes.tobytes(), self.lane_v.tobytes(), self.lane_h.tobytes()))
+            self._hash = hash((self.grid_codes.tobytes(), self.lane_v.tobytes(), self.lane_h.tobytes(), self.closed.tobytes()))
         return self._hash
 
     def __eq__(self, other: object) -> bool:
@@ -36,7 +36,8 @@ class NumberLinkState(State):
             return False
         return (np.array_equal(self.grid_codes, other.grid_codes) and
                 np.array_equal(self.lane_v, other.lane_v) and
-                np.array_equal(self.lane_h, other.lane_h))
+                np.array_equal(self.lane_h, other.lane_h) and
+                np.array_equal(self.closed, other.closed))
 
 
 class NumberLinkAction(Action):
@@ -159,8 +160,8 @@ class NumberLinkNNet(HeurNNetModule):
     def __init__(self, width: int, height: int, num_colors: int, device: str = "cpu"):
         super().__init__()
         
-        # The input will have 3 channels: grid_codes, lane_v, lane_h
-        input_channels = 3
+        # The input will have 4 channels: grid_codes, lane_v, lane_h, closed
+        input_channels = 4
         
         self.conv_layers = Conv2dModel(
             chan_in=input_channels,
@@ -220,14 +221,24 @@ class NumberLinkNNetParV(HeurNNetV[NumberLinkState, NumberLinkGoal]):
         grid_codes_np = np.zeros((batch_size, self.height, self.width), dtype=np.float32)
         lane_v_np = np.zeros((batch_size, self.height, self.width), dtype=np.float32)
         lane_h_np = np.zeros((batch_size, self.height, self.width), dtype=np.float32)
+        closed_np = np.zeros((batch_size, self.height, self.width), dtype=np.float32)
         
         for i, state in enumerate(states):
             grid_codes_np[i] = state.grid_codes
             lane_v_np[i] = state.lane_v
             lane_h_np[i] = state.lane_h
 
+            closed_channel = np.zeros((self.height, self.width), dtype=np.float32)
+            for color_idx, is_closed in enumerate(state.closed):
+                if is_closed:
+                    color_code = color_idx + 1
+                    closed_channel[state.grid_codes == color_code] = 1.0
+                    closed_channel[state.lane_v == color_code] = 1.0
+                    closed_channel[state.lane_h == color_code] = 1.0
+            closed_np[i] = closed_channel
+
         # Stack the channels to form a (batch, channels, height, width) tensor
-        states_np = np.stack([grid_codes_np, lane_v_np, lane_h_np], axis=1)
+        states_np = np.stack([grid_codes_np, lane_v_np, lane_h_np, closed_np], axis=1)
         
         # Goals are not used in this simple V-function network, but the interface requires it.
         # We can pass a dummy array.
