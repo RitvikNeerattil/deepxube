@@ -1,6 +1,11 @@
-from argparse import ArgumentParser
-import torch
 import os
+from argparse import ArgumentParser
+
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+os.environ.setdefault("TF_CPP_MIN_VLOG_LEVEL", "0")
+os.environ.setdefault("GLOG_minloglevel", "3")
+
+import torch
 
 from deepxube.training.train_utils import TrainArgs
 from deepxube.training.train_heur import train
