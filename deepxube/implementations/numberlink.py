@@ -17,8 +17,9 @@ from numberlink.vector_env import NumberLinkRGBVectorEnv
 class NumberLinkState(State):
     """State for the NumberLink environment."""
 
-    def __init__(self, grid_codes: NDArray[np.uint8], lane_v: NDArray[np.uint8], lane_h: NDArray[np.uint8],
+    def __init__(self, grid: Any, grid_codes: NDArray[np.uint8], lane_v: NDArray[np.uint8], lane_h: NDArray[np.uint8],
                  closed: NDArray[np.bool_], steps: int):
+        self.grid = grid
         self.grid_codes = grid_codes
         self.lane_v = lane_v
         self.lane_h = lane_h
@@ -89,6 +90,7 @@ class NumberLinkDeepXubeEnv(EnvStartGoalRW[NumberLinkState, NumberLinkAction, Nu
         states = []
         for i in range(num_states):
             state = NumberLinkState(
+                grid=env._grid[i],
                 grid_codes=env._grid_codes[i],
                 lane_v=env._lane_v[i],
                 lane_h=env._lane_h[i],
@@ -120,6 +122,7 @@ class NumberLinkDeepXubeEnv(EnvStartGoalRW[NumberLinkState, NumberLinkAction, Nu
             variant=VariantConfig(cell_switching_mode=True)
         )
 
+        env._grid = [s.grid for s in states]
         for i, state in enumerate(states):
             env._grid_codes[i] = state.grid_codes
             env._lane_v[i] = state.lane_v
@@ -139,6 +142,7 @@ class NumberLinkDeepXubeEnv(EnvStartGoalRW[NumberLinkState, NumberLinkAction, Nu
         next_states = []
         for i in range(len(states)):
             next_states.append(NumberLinkState(
+                grid=env._grid[i],
                 grid_codes=env._grid_codes[i],
                 lane_v=env._lane_v[i],
                 lane_h=env._lane_h[i],
