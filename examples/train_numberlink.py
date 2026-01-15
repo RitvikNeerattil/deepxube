@@ -1,4 +1,5 @@
 from argparse import ArgumentParser
+import torch
 
 from deepxube.training.train_utils import TrainArgs
 from deepxube.training.train_heur import train
@@ -16,6 +17,7 @@ def main():
     parser.add_argument('--width', type=int, default=7, help="Width of the NumberLink grid")
     parser.add_argument('--height', type=int, default=7, help="Height of the NumberLink grid")
     parser.add_argument('--num_colors', type=int, default=5, help="Number of colors in the NumberLink puzzle")
+    parser.add_argument('--device', type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use for training")
 
     # Train args
     parser.add_argument('--batch_size', type=int, default=100, help="Batch size for training")
@@ -53,7 +55,7 @@ def main():
     
     updater: UpdateHeur
     if args.heur_type.upper() == "V":
-        nnet_par = NumberLinkNNetParV(width=args.width, height=args.height, num_colors=args.num_colors)
+        nnet_par = NumberLinkNNetParV(width=args.width, height=args.height, num_colors=args.num_colors, device=args.device)
         up_heur_args = UpHeurArgs(up_args, ub_heur_solns=False, backup=args.backup)
         up_bwas_args = UpBWASArgs(up_heur_args, weight=args.weight, eps=args.eps)
         updater = UpdateHeurBWASEnum(env, up_bwas_args, nnet_par)

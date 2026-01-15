@@ -156,7 +156,7 @@ class NumberLinkDeepXubeEnv(EnvStartGoalRW[NumberLinkState, NumberLinkAction, Nu
         return [random.choice(state_actions) if state_actions else NumberLinkAction(0) for state_actions in state_actions_l]
 
 class NumberLinkNNet(HeurNNetModule):
-    def __init__(self, width: int, height: int, num_colors: int):
+    def __init__(self, width: int, height: int, num_colors: int, device: str = "cpu"):
         super().__init__()
         
         # The input will have 3 channels: grid_codes, lane_v, lane_h
@@ -179,6 +179,7 @@ class NumberLinkNNet(HeurNNetModule):
             dims=[128, 1],
             acts=["RELU", "LINEAR"]
         )
+        self.to(device)
 
     def _get_conv_output_size(self, width: int, height: int, channels: int) -> int:
         # Helper to calculate the output size of the conv layers
@@ -198,14 +199,15 @@ class NumberLinkNNet(HeurNNetModule):
         return x
 
 class NumberLinkNNetParV(HeurNNetV[NumberLinkState, NumberLinkGoal]):
-    def __init__(self, width: int, height: int, num_colors: int):
+    def __init__(self, width: int, height: int, num_colors: int, device: str = "cpu"):
         super().__init__()
         self.width = width
         self.height = height
         self.num_colors = num_colors
+        self.device = device
 
     def get_nnet(self) -> HeurNNetModule:
-        return NumberLinkNNet(self.width, self.height, self.num_colors)
+        return NumberLinkNNet(self.width, self.height, self.num_colors, self.device)
 
     def to_np(self, states: List[NumberLinkState], goals: List[NumberLinkGoal]) -> List[NDArray[Any]]:
         # Stack the grid representations from each state
