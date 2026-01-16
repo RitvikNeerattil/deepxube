@@ -1,4 +1,6 @@
 import os
+import sys
+import types
 from argparse import ArgumentParser
 
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
@@ -6,15 +8,6 @@ os.environ.setdefault("TF_CPP_MIN_VLOG_LEVEL", "0")
 os.environ.setdefault("GLOG_minloglevel", "3")
 
 import torch
-
-from deepxube.training.train_utils import TrainArgs
-from deepxube.training.train_heur import train
-from deepxube.base.updater import UpArgs, UpdateHeur, UpHeurArgs
-from deepxube.updater.updaters import UpdateHeurBWASEnum, UpBWASArgs
-from deepxube.implementations.numberlink import (
-    NumberLinkDeepXubeEnv,
-    NumberLinkNNetParV,
-)
 
 
 def main():
@@ -30,7 +23,7 @@ def main():
     parser.add_argument("--num_colors", type=int, default=5)
 
     # -------- device --------
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--device", type=str, default="auto")
 
     # -------- training --------
     parser.add_argument("--batch_size", type=int, default=64)
@@ -58,17 +51,59 @@ def main():
     parser.add_argument("--weight", type=float, default=1.0)
     parser.add_argument("--rb", type=int, default=1)
     parser.add_argument("--debug", action="store_true", default=False)
+    parser.add_argument("--no_tensorboard", action="store_true", default=False)
+    parser.add_argument("--smoke_test", action="store_true", default=False)
+    parser.add_argument("--no_shm", action="store_true", default=False)
 
     args = parser.parse_args()
 
-    # ===== HARD CUDA ENFORCEMENT =====
-    if args.device == "cuda":
-        assert torch.cuda.is_available(), (
-            "CUDA requested but torch.cuda.is_available() == False"
-        )
-        torch.cuda.set_device(0)
+    if args.no_tensorboard:
+        os.environ.setdefault("TENSORBOARD_NO_TENSORFLOW", "1")
 
-    os.makedirs(args.nnet_dir, exist_ok=True)
+        import importlib.machinery
+
+        tf_mod = types.ModuleType("tensorflow")
+        tf_mod.__spec__ = importlib.machinery.ModuleSpec("tensorflow", loader=None)
+        sys.modules["tensorflow"] = tf_mod
+
+        tb_pkg = types.ModuleType("tensorboard")
+        tb_pkg.__spec__ = importlib.machinery.ModuleSpec("tensorboard", loader=None)
+        sys.modules["tensorboard"] = tb_pkg
+
+        tb_mod = types.ModuleType("torch.utils.tensorboard")
+
+        class SummaryWriter:
+            def __init__(self, *a, **k):
+                pass
+
+            def add_scalar(self, *a, **k):
+                pass
+
+            def flush(self):
+                pass
+
+            def close(self):
+                pass
+
+        tb_mod.SummaryWriter = SummaryWriter
+        sys.modules["torch.utils.tensorboard"] = tb_mod
+
+    from deepxube.training.train_utils import TrainArgs
+    from deepxube.training.train_heur import train
+    from deepxube.base.updater import UpArgs, UpdateHeur, UpHeurArgs
+    from deepxube.updater.updaters import UpdateHeurBWASEnum, UpBWASArgs
+    if args.no_shm:
+        os.environ["DEEPXUBE_NO_SHM"] = "1"
+
+    from deepxube.implementations.numberlink import (
+        NumberLinkDeepXubeEnv,
+        NumberLinkNNetParV,
+    )
+    if args.device == "auto":
+        args.device = "cuda" if torch.cuda.is_available() else "cpu"
+    elif args.device == "cuda" and not torch.cuda.is_available():
+        print("CUDA requested but not available; falling back to CPU.")
+        args.device = "cpu"
 
     # ===== ENV =====
     env = NumberLinkDeepXubeEnv(
@@ -76,6 +111,21 @@ def main():
         height=args.height,
         num_colors=args.num_colors,
     )
+    if args.smoke_test:
+        nnet_par_smoke = NumberLinkNNetParV(
+            width=args.width,
+            height=args.height,
+            num_colors=args.num_colors,
+            device=args.device,
+        )
+        states = env.get_start_states(1)
+        goals = env.sample_goal(states, states)
+        with torch.no_grad():
+            inputs = nnet_par_smoke.to_torch(states, goals)
+            nnet = nnet_par_smoke.get_nnet()
+            out = nnet(inputs)
+        print(f"Smoke test OK. Output shape: {tuple(out.shape)}")
+        return
 
     # ===== UPDATER =====
     up_args = UpArgs(

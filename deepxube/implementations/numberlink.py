@@ -1,4 +1,5 @@
 from typing import List, Optional
+import os
 import random
 import numpy as np
 from numpy.typing import NDArray
@@ -12,6 +13,39 @@ from deepxube.nnet.pytorch_models import Conv2dModel, FullyConnectedModel
 
 from numberlink.config import GeneratorConfig, VariantConfig
 from numberlink.vector_env import NumberLinkRGBVectorEnv
+
+
+# Lightweight, picklable wrapper to bypass shared_memory in small runs.
+class LocalNDArray:
+    def __init__(self, array: NDArray):
+        self.array = array
+
+    def close(self) -> None:
+        pass
+
+    def unlink(self) -> None:
+        pass
+
+
+def np_to_local_nd(arr: NDArray) -> LocalNDArray:
+    return LocalNDArray(arr)
+
+
+def _patch_no_shm() -> None:
+    if os.environ.get("DEEPXUBE_NO_SHM", "0") != "1":
+        return
+    try:
+        from deepxube.base import updater as updater_mod
+        from deepxube.nnet import nnet_utils as nnet_utils_mod
+        from deepxube.utils import data_utils as data_utils_mod
+        updater_mod.np_to_shnd = np_to_local_nd
+        nnet_utils_mod.np_to_shnd = np_to_local_nd
+        data_utils_mod.np_to_shnd = np_to_local_nd
+    except Exception:
+        pass
+
+
+_patch_no_shm()
 
 
 # =========================
