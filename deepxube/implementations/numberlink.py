@@ -9,7 +9,7 @@ from torch import Tensor
 
 from deepxube.base.env import Action, EnvEnumerableActs, EnvStartGoalRW, Goal, State
 from deepxube.base.heuristic import HeurNNetModule, HeurNNetV
-from deepxube.nnet.pytorch_models import Conv2dModel, FullyConnectedModel
+from deepxube.nnet.pytorch_models import FullyConnectedModel
 
 from numberlink.config import GeneratorConfig, VariantConfig
 from numberlink.vector_env import NumberLinkRGBVectorEnv
@@ -47,11 +47,7 @@ def _patch_no_shm() -> None:
 
 _patch_no_shm()
 
-
-# =========================
-# ======== STATE ==========
-# =========================
-
+#state
 class NumberLinkState(State):
     __slots__ = ("grid_codes", "lane_v", "lane_h", "closed", "steps", "_hash")
 
@@ -90,10 +86,7 @@ class NumberLinkState(State):
         )
 
 
-# =========================
-# ======= ACTION ==========
-# =========================
-
+#action
 class NumberLinkAction(Action):
     __slots__ = ("action",)
 
@@ -111,10 +104,7 @@ class NumberLinkGoal(Goal):
     pass
 
 
-# =========================
-# ===== ENVIRONMENT =======
-# =========================
-
+#env
 class NumberLinkDeepXubeEnv(
     EnvStartGoalRW[NumberLinkState, NumberLinkAction, NumberLinkGoal],
     EnvEnumerableActs,
@@ -219,33 +209,43 @@ class NumberLinkDeepXubeEnv(
         return env
 
 
-# =========================
-# ======= NETWORK =========
-# =========================
-
-class NumberLinkNNet(HeurNNetModule):
-    def __init__(self, width, height, device):
+class OneHot(torch.nn.Module):
+    def __init__(self, data_dim: int, one_hot_depth: int) -> None:
         super().__init__()
+        self.data_dim = data_dim
+        self.one_hot_depth = one_hot_depth
 
-        self.conv = Conv2dModel(
-            chan_in=4,
-            channel_sizes=[32, 64],
-            kernel_sizes=[3, 3],
-            paddings=[1, 1],
-            layer_acts=["RELU", "RELU"],
-            batch_norms=[True, True],
+    def forward(self, x: Tensor) -> Tensor:
+        x = torch.nn.functional.one_hot(x.long(), self.one_hot_depth)
+        x = x.float()
+        return x.view(-1, self.data_dim * self.one_hot_depth)
+
+
+#network
+class NumberLinkNNet(HeurNNetModule):
+    def __init__(self, width, height, one_hot_depth, device):
+        super().__init__()
+        state_dim = width * height
+        self.grid_proc = OneHot(state_dim, one_hot_depth)
+        self.lv_proc = OneHot(state_dim, one_hot_depth)
+        self.lh_proc = OneHot(state_dim, one_hot_depth)
+
+        input_dim = (state_dim * one_hot_depth * 3) + state_dim
+        self.fc = FullyConnectedModel(
+            input_dim,
+            [512, 256, 1],
+            ["RELU", "RELU", "LINEAR"],
+            batch_norms=[True, True, False],
         )
-
-        with torch.no_grad():
-            dummy = torch.zeros(1, 4, height, width)
-            out_dim = self.conv(dummy).flatten(1).shape[1]
-
-        self.fc = FullyConnectedModel(out_dim, [128, 1], ["RELU", "LINEAR"])
         self.to(device)
 
     def forward(self, states_goals_l: List[Tensor]) -> Tensor:
-        x = self.conv(states_goals_l[0])
-        x = x.flatten(1)
+        grid, lv, lh, closed = states_goals_l[0:4]
+        grid_proc = self.grid_proc(grid)
+        lv_proc = self.lv_proc(lv)
+        lh_proc = self.lh_proc(lh)
+        closed_proc = closed.float().view(closed.shape[0], -1)
+        x = torch.cat((grid_proc, lv_proc, lh_proc, closed_proc), dim=1)
         return self.fc(x)
 
 
@@ -254,24 +254,32 @@ class NumberLinkNNetParV(HeurNNetV[NumberLinkState, NumberLinkGoal]):
         super().__init__()
         self.width = width
         self.height = height
+        self.num_colors = num_colors
         self.device = torch.device("cuda" if device == "cuda" else "cpu")
         self.on_gpu = self.device.type == "cuda"  # REQUIRED
 
     def get_nnet(self):
-        return NumberLinkNNet(self.width, self.height, self.device)
+        one_hot_depth = (self.num_colors or 0) + 1
+        return NumberLinkNNet(self.width, self.height, one_hot_depth, self.device)
 
     def to_torch(self, states, goals):
         B = len(states)
 
-        grid = torch.zeros((B, self.height, self.width), device=self.device)
+        grid = torch.zeros((B, self.height, self.width), device=self.device, dtype=torch.int64)
         lv = torch.zeros_like(grid)
         lh = torch.zeros_like(grid)
-        closed = torch.zeros_like(grid)
+        closed = torch.zeros((B, self.height, self.width), device=self.device, dtype=torch.float32)
 
         for i, s in enumerate(states):
-            grid[i] = torch.from_numpy(s.grid_codes).to(self.device, non_blocking=True)
-            lv[i] = torch.from_numpy(s.lane_v).to(self.device, non_blocking=True)
-            lh[i] = torch.from_numpy(s.lane_h).to(self.device, non_blocking=True)
+            grid[i] = torch.from_numpy(s.grid_codes).to(
+                self.device, dtype=torch.int64, non_blocking=True
+            )
+            lv[i] = torch.from_numpy(s.lane_v).to(
+                self.device, dtype=torch.int64, non_blocking=True
+            )
+            lh[i] = torch.from_numpy(s.lane_h).to(
+                self.device, dtype=torch.int64, non_blocking=True
+            )
 
             for c, done in enumerate(s.closed):
                 if done:
@@ -283,12 +291,11 @@ class NumberLinkNNetParV(HeurNNetV[NumberLinkState, NumberLinkGoal]):
                     )
                     closed[i][mask] = 1.0
 
-        x = torch.stack([grid, lv, lh, closed], dim=1)
         goals_t = torch.zeros((B,), device=self.device)
 
-        return [x, goals_t]
+        return [grid, lv, lh, closed, goals_t]
 
-    # 🔴 REQUIRED BY ABSTRACT BASE CLASS
+    # REQUIRED BY ABSTRACT BASE CLASS
     def to_np(self, states, goals):
         """
         Only used if DeepXube explicitly requests NumPy.

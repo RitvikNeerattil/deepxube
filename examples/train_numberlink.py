@@ -37,10 +37,10 @@ def main():
     # -------- BWAS / updater --------
     parser.add_argument("--step_max", type=int, required=True)
     parser.add_argument("--up_itrs", type=int, default=50)
-    parser.add_argument("--up_gen_itrs", type=int, default=10)      # ↓ IMPORTANT
+    parser.add_argument("--up_gen_itrs", type=int, default=10)      # IMPORTANT
     parser.add_argument("--up_procs", type=int, default=2)
-    parser.add_argument("--up_search_itrs", type=int, default=20)   # ↓ IMPORTANT
-    parser.add_argument("--up_batch_size", type=int, default=32)    # ↓ IMPORTANT
+    parser.add_argument("--up_search_itrs", type=int, default=20)   # IMPORTANT
+    parser.add_argument("--up_batch_size", type=int, default=32)    # IMPORTANT
     parser.add_argument("--up_nnet_batch_size", type=int, default=4096)
     parser.add_argument("--sync_main", action="store_true", default=False)
     parser.add_argument("--verbose", action="store_true", default=True)
@@ -88,12 +88,13 @@ def main():
         tb_mod.SummaryWriter = SummaryWriter
         sys.modules["torch.utils.tensorboard"] = tb_mod
 
+    if args.no_shm:
+        os.environ["DEEPXUBE_NO_SHM"] = "1"
+
     from deepxube.training.train_utils import TrainArgs
     from deepxube.training.train_heur import train
     from deepxube.base.updater import UpArgs, UpdateHeur, UpHeurArgs
     from deepxube.updater.updaters import UpdateHeurBWASEnum, UpBWASArgs
-    if args.no_shm:
-        os.environ["DEEPXUBE_NO_SHM"] = "1"
 
     from deepxube.implementations.numberlink import (
         NumberLinkDeepXubeEnv,
@@ -123,11 +124,25 @@ def main():
         with torch.no_grad():
             inputs = nnet_par_smoke.to_torch(states, goals)
             nnet = nnet_par_smoke.get_nnet()
+            nnet.eval()
             out = nnet(inputs)
         print(f"Smoke test OK. Output shape: {tuple(out.shape)}")
         return
 
     # ===== UPDATER =====
+    num_gen = args.batch_size * args.up_gen_itrs
+    if args.up_search_itrs <= 0:
+        raise ValueError("--up_search_itrs must be > 0")
+    if num_gen % args.up_search_itrs != 0:
+        adjusted = min(args.up_search_itrs, num_gen)
+        while adjusted > 1 and (num_gen % adjusted) != 0:
+            adjusted -= 1
+        print(
+            "Adjusting --up_search_itrs from"
+            f" {args.up_search_itrs} to {adjusted} so num_gen ({num_gen}) is divisible."
+        )
+        args.up_search_itrs = adjusted
+
     up_args = UpArgs(
         args.step_max,
         args.up_itrs,
