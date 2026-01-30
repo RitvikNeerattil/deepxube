@@ -7,7 +7,7 @@ import re
 import numpy as np
 from numpy.typing import NDArray
 
-from deepxube.base.domain import State, Action, Goal, GoalStartRevWalkableActsRev
+from deepxube.base.domain import State, Action, Goal, GoalStartRevWalkableActsRev, ActsEnumFixed
 from deepxube.base.nnet_input import HasFlatSGActsEnumFixedIn, HasFlatSGAIn
 from deepxube.base.factory import Parser
 from deepxube.factories.domain_factory import domain_factory
@@ -119,6 +119,7 @@ class NumberLinkAction(Action):
 @domain_factory.register_class("numberlink")
 class NumberLink(
     GoalStartRevWalkableActsRev[NumberLinkState, NumberLinkAction, NumberLinkGoal],
+    ActsEnumFixed[NumberLinkState, NumberLinkAction, NumberLinkGoal],
     HasFlatSGActsEnumFixedIn[NumberLinkState, NumberLinkAction, NumberLinkGoal],
     HasFlatSGAIn[NumberLinkState, NumberLinkAction, NumberLinkGoal],
 ):
