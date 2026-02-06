@@ -251,11 +251,29 @@ class NumberLink(
     def sample_start_goal_pairs(
         self, num_steps_l: List[int], times: Optional[Any] = None
     ) -> Tuple[List[NumberLinkState], List[NumberLinkGoal]]:
-        # Forward-walk from random start states. The goal object is unused by is_solved.
-        states_start = self.sample_start_states(len(num_steps_l))
-        if any(step > 0 for step in num_steps_l):
-            states_start = self.random_walk(states_start, num_steps_l)[0]
+        # Curriculum-friendly starts: apply a prefix of a known solution to get near-solved states.
+        # Falls back to random starts if no solution is available for the generated level.
+        states_start: List[NumberLinkState] = [self._goal_state] * len(num_steps_l)
         goals = [NumberLinkGoal() for _ in range(len(num_steps_l))]
+
+        step_to_idxs: Dict[int, List[int]] = {}
+        for idx, step in enumerate(num_steps_l):
+            step_to_idxs.setdefault(int(step), []).append(idx)
+
+        for step_count, idxs in step_to_idxs.items():
+            env = self._build_env(num_envs=len(idxs))
+            env.reset()
+            solution = env.get_solution()
+            if solution:
+                sol_len = len(solution)
+                steps_remaining = min(step_count, sol_len)
+                prefix_len = sol_len - steps_remaining
+                for step_idx in range(prefix_len):
+                    act = int(solution[step_idx])
+                    env.step(np.full((len(idxs),), act, dtype=np.int64))
+            for pos, state in enumerate([self._capture_state(env, i) for i in range(len(idxs))]):
+                states_start[idxs[pos]] = state
+
         return states_start, goals
 
     def is_solved(self, states: List[NumberLinkState], goals: List[NumberLinkGoal]) -> List[bool]:
