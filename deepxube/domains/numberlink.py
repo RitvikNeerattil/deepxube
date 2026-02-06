@@ -243,6 +243,21 @@ class NumberLink(
         goals = [NumberLinkGoal() for _ in range(num)]
         return states_goal, goals
 
+    def sample_start_states(self, num: int) -> List[NumberLinkState]:
+        env = self._ensure_env(num)
+        env.reset()
+        return [self._capture_state(env, i) for i in range(num)]
+
+    def sample_start_goal_pairs(
+        self, num_steps_l: List[int], times: Optional[Any] = None
+    ) -> Tuple[List[NumberLinkState], List[NumberLinkGoal]]:
+        # Forward-walk from random start states. The goal object is unused by is_solved.
+        states_start = self.sample_start_states(len(num_steps_l))
+        if any(step > 0 for step in num_steps_l):
+            states_start = self.random_walk(states_start, num_steps_l)[0]
+        goals = [NumberLinkGoal() for _ in range(len(num_steps_l))]
+        return states_start, goals
+
     def is_solved(self, states: List[NumberLinkState], goals: List[NumberLinkGoal]) -> List[bool]:
         env = self._ensure_env(len(states))
         self._load_states(env, states)
