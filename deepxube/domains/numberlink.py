@@ -200,10 +200,18 @@ class NumberLink(
     def _compute_goal_state(self) -> NumberLinkState:
         env = self._build_env(num_envs=1)
         env.reset()
+        if bool(env._compute_solved_mask()[0]):
+            return self._capture_state(env, 0)
+
         solution = env.get_solution()
         if solution:
             for act in solution:
                 env.step(np.array([act], dtype=np.int64))
+                # Some generators include extra actions after the first solved state.
+                if bool(env._compute_solved_mask()[0]):
+                    return self._capture_state(env, 0)
+
+        # Fallback: return final state if solved state was not observed.
         return self._capture_state(env, 0)
 
     @staticmethod
@@ -264,14 +272,26 @@ class NumberLink(
             env = self._build_env(num_envs=len(idxs))
             env.reset()
             solution = env.get_solution()
+            # Capture trajectory snapshots and select the prefix aligned to first solved step.
+            snapshots: Dict[int, List[NumberLinkState]] = {
+                0: [self._capture_state(env, i) for i in range(len(idxs))]
+            }
+            solved_step: Optional[int] = 0 if bool(env._compute_solved_mask()[0]) else None
+
             if solution:
-                sol_len = len(solution)
-                steps_remaining = min(step_count, sol_len)
-                prefix_len = sol_len - steps_remaining
-                for step_idx in range(prefix_len):
-                    act = int(solution[step_idx])
-                    env.step(np.full((len(idxs),), act, dtype=np.int64))
-            for pos, state in enumerate([self._capture_state(env, i) for i in range(len(idxs))]):
+                for step_idx, act in enumerate(solution, start=1):
+                    env.step(np.full((len(idxs),), int(act), dtype=np.int64))
+                    snapshots[step_idx] = [self._capture_state(env, i) for i in range(len(idxs))]
+                    if (solved_step is None) and bool(env._compute_solved_mask()[0]):
+                        solved_step = step_idx
+
+            if solved_step is None:
+                solved_step = max(snapshots.keys())
+
+            steps_remaining = min(int(step_count), solved_step)
+            prefix_len = solved_step - steps_remaining
+            selected_states = snapshots.get(prefix_len, snapshots[max(snapshots.keys())])
+            for pos, state in enumerate(selected_states):
                 states_start[idxs[pos]] = state
 
         return states_start, goals
