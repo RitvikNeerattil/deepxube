@@ -158,6 +158,7 @@ class NumberLink(
         self.step_limit = step_limit
 
         self._env = self._build_env(num_envs=1)
+        self._expand_env: Optional[NumberLinkRGBVectorEnv] = None
         self._goal_state = self._compute_goal_state()
         self._actions = [NumberLinkAction(i) for i in range(self._env.single_action_space.n)]
 
@@ -167,6 +168,8 @@ class NumberLink(
         self._action_size = self._env.single_action_space.n
         self._actions_per_color = self._env._actions_per_color
         self._num_dirs = self._env._num_dirs
+        self._bridges_mask = self._env._bridges_mask.copy()
+        self._non_bridge_mask = ~self._bridges_mask
 
         self._dir_rev = self._compute_dir_reverse(self._env._dirs)
 
@@ -185,6 +188,11 @@ class NumberLink(
         if (self._env is None) or (self._env.num_envs != num_envs):
             self._env = self._build_env(num_envs=num_envs)
         return self._env
+
+    def _ensure_expand_env(self, num_envs: int) -> NumberLinkRGBVectorEnv:
+        if (self._expand_env is None) or (self._expand_env.num_envs != num_envs):
+            self._expand_env = self._build_env(num_envs=num_envs)
+        return self._expand_env
 
     @staticmethod
     def _compute_dir_reverse(dirs: NDArray[np.signedinteger]) -> List[int]:
@@ -297,10 +305,84 @@ class NumberLink(
         return states_start, goals
 
     def is_solved(self, states: List[NumberLinkState], goals: List[NumberLinkGoal]) -> List[bool]:
+        if len(states) == 0:
+            return []
+
+        # Fast path mode check: closed connections plus fill constraint.
+        # This avoids loading states into the vector env for every query.
+        if not self.variant_cfg.cell_switching_mode:
+            solved: List[bool] = []
+            if self.variant_cfg.must_fill:
+                for state in states:
+                    if not bool(np.all(state.closed)):
+                        solved.append(False)
+                        continue
+                    normal_ok = bool(np.all((state.grid != 0) | self._bridges_mask))
+                    bridge_ok = bool(
+                        np.all(self._non_bridge_mask | ((state.lane_v != 0) | (state.lane_h != 0)))
+                    )
+                    solved.append(normal_ok and bridge_ok)
+            else:
+                solved = [bool(np.all(state.closed)) for state in states]
+            return solved
+
         env = self._ensure_env(len(states))
         self._load_states(env, states)
         solved = env._compute_solved_mask()
         return solved.astype(bool).tolist()
+
+    def expand(
+        self, states: List[NumberLinkState]
+    ) -> Tuple[List[List[NumberLinkState]], List[List[NumberLinkAction]], List[List[float]]]:
+        if len(states) == 0:
+            return [], [], []
+
+        env = self._ensure_env(len(states))
+        self._load_states(env, states)
+        mask = env._compute_action_mask()
+
+        valid_actions: List[NDArray[np.int64]] = []
+        counts: List[int] = []
+        for row in mask:
+            acts_row = np.flatnonzero(row).astype(np.int64, copy=False)
+            if acts_row.size == 0:
+                acts_row = np.array([0], dtype=np.int64)
+            valid_actions.append(acts_row)
+            counts.append(int(acts_row.size))
+
+        total_children = int(np.sum(np.asarray(counts, dtype=np.int64)))
+        parent_idxs = np.repeat(np.arange(len(states), dtype=np.int64), counts)
+        actions_np = np.concatenate(valid_actions, axis=0).astype(np.int64, copy=False)
+
+        env_exp = self._ensure_expand_env(total_children)
+        env_exp._grid_codes[:total_children] = env._grid_codes[parent_idxs]
+        env_exp._lane_v[:total_children] = env._lane_v[parent_idxs]
+        env_exp._lane_h[:total_children] = env._lane_h[parent_idxs]
+        env_exp._stack_rows[:total_children] = env._stack_rows[parent_idxs]
+        env_exp._stack_cols[:total_children] = env._stack_cols[parent_idxs]
+        env_exp._stack_lane[:total_children] = env._stack_lane[parent_idxs]
+        env_exp._stack_len[:total_children] = env._stack_len[parent_idxs]
+        env_exp._heads[:total_children] = env._heads[parent_idxs]
+        env_exp._closed[:total_children] = env._closed[parent_idxs]
+        env_exp._step_count[:total_children] = env._step_count[parent_idxs]
+        env_exp._done_mask[:total_children] = False
+        env_exp._arm_presence[:total_children] = env._arm_presence[parent_idxs]
+
+        env_exp.step(actions_np)
+        next_states = [self._capture_state(env_exp, i) for i in range(total_children)]
+
+        states_exp_l: List[List[NumberLinkState]] = []
+        actions_exp_l: List[List[NumberLinkAction]] = []
+        tcs_l: List[List[float]] = []
+        offset = 0
+        for acts_row, count in zip(valid_actions, counts, strict=True):
+            end = offset + count
+            states_exp_l.append(next_states[offset:end])
+            actions_exp_l.append([NumberLinkAction(int(a)) for a in acts_row.tolist()])
+            tcs_l.append([1.0] * count)
+            offset = end
+
+        return states_exp_l, actions_exp_l, tcs_l
 
     def get_actions_fixed(self) -> List[NumberLinkAction]:
         return self._actions.copy()
