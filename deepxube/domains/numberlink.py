@@ -337,50 +337,43 @@ class NumberLink(
         if len(states) == 0:
             return [], [], []
 
-        env = self._ensure_env(len(states))
-        self._load_states(env, states)
-        mask = env._compute_action_mask()
+        env_parent = self._ensure_env(len(states))
+        self._load_states(env_parent, states)
+        state_actions: List[List[NumberLinkAction]] = self.get_state_actions(states)
 
-        valid_actions: List[NDArray[np.int64]] = []
-        counts: List[int] = []
-        for row in mask:
-            acts_row = np.flatnonzero(row).astype(np.int64, copy=False)
-            if acts_row.size == 0:
-                acts_row = np.array([0], dtype=np.int64)
-            valid_actions.append(acts_row)
-            counts.append(int(acts_row.size))
+        states_exp_l: List[List[NumberLinkState]] = [[] for _ in range(len(states))]
+        actions_exp_l: List[List[NumberLinkAction]] = [[] for _ in range(len(states))]
+        tcs_l: List[List[float]] = [[] for _ in range(len(states))]
 
-        total_children = int(np.sum(np.asarray(counts, dtype=np.int64)))
-        parent_idxs = np.repeat(np.arange(len(states), dtype=np.int64), counts)
-        actions_np = np.concatenate(valid_actions, axis=0).astype(np.int64, copy=False)
+        num_actions_tot: NDArray[np.int_] = np.array([len(x) for x in state_actions], dtype=int)
+        num_actions_taken: NDArray[np.int_] = np.zeros(len(states), dtype=int)
+        actions_lt: NDArray[np.bool_] = num_actions_taken < num_actions_tot
 
-        env_exp = self._ensure_expand_env(total_children)
-        env_exp._grid_codes[:total_children] = env._grid_codes[parent_idxs]
-        env_exp._lane_v[:total_children] = env._lane_v[parent_idxs]
-        env_exp._lane_h[:total_children] = env._lane_h[parent_idxs]
-        env_exp._stack_rows[:total_children] = env._stack_rows[parent_idxs]
-        env_exp._stack_cols[:total_children] = env._stack_cols[parent_idxs]
-        env_exp._stack_lane[:total_children] = env._stack_lane[parent_idxs]
-        env_exp._stack_len[:total_children] = env._stack_len[parent_idxs]
-        env_exp._heads[:total_children] = env._heads[parent_idxs]
-        env_exp._closed[:total_children] = env._closed[parent_idxs]
-        env_exp._step_count[:total_children] = env._step_count[parent_idxs]
-        env_exp._done_mask[:total_children] = False
-        env_exp._arm_presence[:total_children] = env._arm_presence[parent_idxs]
+        while np.any(actions_lt):
+            idxs: NDArray[np.int_] = np.where(actions_lt)[0]
+            actions_idxs: List[NumberLinkAction] = [state_actions[idx][num_actions_taken[idx]] for idx in idxs]
+            env_expand = self._ensure_expand_env(len(idxs))
+            env_expand._grid_codes[: len(idxs)] = env_parent._grid_codes[idxs]
+            env_expand._lane_v[: len(idxs)] = env_parent._lane_v[idxs]
+            env_expand._lane_h[: len(idxs)] = env_parent._lane_h[idxs]
+            env_expand._stack_rows[: len(idxs)] = env_parent._stack_rows[idxs]
+            env_expand._stack_cols[: len(idxs)] = env_parent._stack_cols[idxs]
+            env_expand._stack_lane[: len(idxs)] = env_parent._stack_lane[idxs]
+            env_expand._stack_len[: len(idxs)] = env_parent._stack_len[idxs]
+            env_expand._heads[: len(idxs)] = env_parent._heads[idxs]
+            env_expand._closed[: len(idxs)] = env_parent._closed[idxs]
+            env_expand._step_count[: len(idxs)] = env_parent._step_count[idxs]
+            env_expand._done_mask[: len(idxs)] = False
+            env_expand._arm_presence[: len(idxs)] = env_parent._arm_presence[idxs]
+            env_expand.step(np.array([a.action for a in actions_idxs], dtype=np.int64))
 
-        env_exp.step(actions_np)
-        next_states = [self._capture_state(env_exp, i) for i in range(total_children)]
+            for exp_idx, idx in enumerate(idxs):
+                states_exp_l[idx].append(self._capture_state(env_expand, exp_idx))
+                actions_exp_l[idx].append(actions_idxs[exp_idx])
+                tcs_l[idx].append(1.0)
 
-        states_exp_l: List[List[NumberLinkState]] = []
-        actions_exp_l: List[List[NumberLinkAction]] = []
-        tcs_l: List[List[float]] = []
-        offset = 0
-        for acts_row, count in zip(valid_actions, counts, strict=True):
-            end = offset + count
-            states_exp_l.append(next_states[offset:end])
-            actions_exp_l.append([NumberLinkAction(int(a)) for a in acts_row.tolist()])
-            tcs_l.append([1.0] * count)
-            offset = end
+            num_actions_taken[idxs] = num_actions_taken[idxs] + 1
+            actions_lt[idxs] = num_actions_taken[idxs] < num_actions_tot[idxs]
 
         return states_exp_l, actions_exp_l, tcs_l
 
@@ -395,9 +388,9 @@ class NumberLink(
         for row in mask:
             valid = np.where(row != 0)[0]
             if valid.size == 0:
-                actions.append([NumberLinkAction(0)])
+                actions.append([self._actions[0]])
             else:
-                actions.append([NumberLinkAction(int(a)) for a in valid.tolist()])
+                actions.append([self._actions[int(a)] for a in valid.tolist()])
         return actions
 
     def sample_state_action(self, states: List[NumberLinkState]) -> List[NumberLinkAction]:
@@ -408,9 +401,9 @@ class NumberLink(
         for row in mask:
             valid = np.where(row != 0)[0]
             if valid.size == 0:
-                actions.append(NumberLinkAction(0))
+                actions.append(self._actions[0])
             else:
-                actions.append(NumberLinkAction(int(np.random.choice(valid))))
+                actions.append(self._actions[int(np.random.choice(valid))])
         return actions
 
     def next_state(
