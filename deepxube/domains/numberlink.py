@@ -365,8 +365,6 @@ class NumberLink(
         return solved.astype(bool).tolist()
 
     def _state_is_solved_path_mode(self, state: NumberLinkState) -> bool:
-        if not bool(np.all(state.closed)):
-            return False
         if self.variant_cfg.must_fill:
             normal_ok = bool(np.all((state.grid != 0) | self._bridges_mask))
             bridge_ok = bool(np.all(self._non_bridge_mask | ((state.lane_v != 0) | (state.lane_h != 0))))
@@ -458,6 +456,16 @@ class NumberLink(
                 head0 = state.heads[color_idx, 0].astype(np.int64, copy=False)
                 head1 = state.heads[color_idx, 1].astype(np.int64, copy=False)
                 ok = int(np.abs(head0[0] - head1[0]) + np.abs(head0[1] - head1[1])) <= 1
+            statuses.append("ok" if ok else "bad")
+        return statuses
+
+    def _computed_color_statuses(self, state: NumberLinkState) -> List[str]:
+        region_counts = self._color_region_counts(state)
+        stack_statuses = self._color_stack_statuses(state)
+        continuity_statuses = self._color_stack_continuity_statuses(state)
+        statuses: List[str] = []
+        for idx in range(self._num_colors):
+            ok = region_counts[idx] == 1 and stack_statuses[idx] == "ok" and continuity_statuses[idx] == "ok"
             statuses.append("ok" if ok else "bad")
         return statuses
 
@@ -675,10 +683,15 @@ class NumberLink(
             f"{self._color_name(idx)}={status}"
             for idx, status in enumerate(self._color_stack_continuity_statuses(state))
         )
+        computed_statuses = ", ".join(
+            f"{self._color_name(idx)}={status}"
+            for idx, status in enumerate(self._computed_color_statuses(state))
+        )
         info = [
             f"Solved: {solved}",
             f"Step count: {state.step_count}",
-            f"Closed colors: {int(np.sum(state.closed))}/{len(state.closed)}",
+            f"Env closed flags: {int(np.sum(state.closed))}/{len(state.closed)}",
+            f"Computed colors: {computed_statuses}",
             f"Color regions: {region_counts}",
             f"Path stacks: {stack_statuses}",
             f"Continuity: {continuity_statuses}",

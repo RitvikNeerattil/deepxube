@@ -205,8 +205,13 @@ def _viz_interactive_controls(
 ) -> None:
     state_box: Dict[str, State] = {"state": state}
     control_cids: Dict[str, int] = {}
+    button_refs: List[Tuple[Button, int]] = []
 
     def attach_buttons() -> None:
+        while button_refs:
+            button_old, cid_old = button_refs.pop()
+            button_old.disconnect(cid_old)
+
         button_specs: List[Tuple[str, str, Tuple[float, float, float, float]]] = [
             ("Up", "up", (0.185, 0.070, 0.080, 0.040)),
             ("Left", "left", (0.095, 0.020, 0.080, 0.040)),
@@ -217,8 +222,9 @@ def _viz_interactive_controls(
         for label, act_str, rect in button_specs:
             ax_button = fig.add_axes(rect)
             button = Button(ax_button, label)
-            button.on_clicked(lambda _event, action_str=act_str: apply_action_str(action_str))
+            cid = button.on_clicked(lambda _event, action_str=act_str: apply_action_str(action_str))
             buttons.append(button)
+            button_refs.append((button, cid))
         setattr(fig, "_deepxube_viz_buttons", buttons)
 
     def refresh() -> None:
