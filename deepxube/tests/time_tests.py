@@ -15,6 +15,12 @@ import numpy as np
 import time
 
 
+def _per_sec(num: int, elapsed_time: float) -> float:
+    if elapsed_time <= 0.0:
+        return float("inf")
+    return num / elapsed_time
+
+
 def data_runner(queue1: Queue, queue2: Queue) -> None:
     while True:
         the = queue1.get()
@@ -31,7 +37,7 @@ def test_env(env: Domain, num_states: int, step_max: int) -> Tuple[List[State], 
     assert len(states) == len(goals), f"state({len(states)}) and goal({len(goals)}) pairs not same length"
 
     elapsed_time = time.time() - start_time
-    states_per_sec = len(states) / elapsed_time
+    states_per_sec = _per_sec(len(states), elapsed_time)
     print(sg_times.get_time_str(decplace=16))
     print("Generated %i start/goal states in %s seconds (%.2f/second)" % (len(states), elapsed_time, states_per_sec))
 
@@ -40,7 +46,7 @@ def test_env(env: Domain, num_states: int, step_max: int) -> Tuple[List[State], 
     actions: List[Action] = env.sample_state_action(states)
 
     elapsed_time = time.time() - start_time
-    states_per_sec = len(states) / elapsed_time
+    states_per_sec = _per_sec(len(states), elapsed_time)
     print("Got %i random actions in %s seconds (%.2f/second)" % (len(states), elapsed_time, states_per_sec))
 
     # next state
@@ -48,7 +54,7 @@ def test_env(env: Domain, num_states: int, step_max: int) -> Tuple[List[State], 
     env.next_state(states, actions)
 
     elapsed_time = time.time() - start_time
-    states_per_sec = len(states) / elapsed_time
+    states_per_sec = _per_sec(len(states), elapsed_time)
     print("Got %i next states in %s seconds (%.2f/second)" % (len(states), elapsed_time, states_per_sec))
 
     # is_solved
@@ -56,7 +62,7 @@ def test_env(env: Domain, num_states: int, step_max: int) -> Tuple[List[State], 
     is_solved_l: List[bool] = env.is_solved(states, goals)
     per_solved: float = 100.0 * float(np.mean(is_solved_l))
     elapsed_time = time.time() - start_time
-    states_per_sec = len(states) / elapsed_time
+    states_per_sec = _per_sec(len(states), elapsed_time)
     print(f"Computed is_solved for {len(states)} states ({per_solved:.2f}% solved) in {elapsed_time} seconds "
           f"({states_per_sec:.2f}/second)")
 
@@ -65,7 +71,7 @@ def test_env(env: Domain, num_states: int, step_max: int) -> Tuple[List[State], 
     states_next: List[State] = env.sample_next_state(states)[0]
 
     elapsed_time = time.time() - start_time
-    states_per_sec = len(states_next) / elapsed_time
+    states_per_sec = _per_sec(len(states_next), elapsed_time)
     print("Got %i random next states in %s seconds (%.2f/second)" % (len(states_next), elapsed_time, states_per_sec))
 
     # multiprocessing
@@ -101,7 +107,7 @@ def test_envstartgoalrw(env: StartGoalWalkable, num_states: int) -> None:
     states: List[State] = env.sample_start_states(num_states)
 
     elapsed_time = time.time() - start_time
-    states_per_sec = len(states) / elapsed_time
+    states_per_sec = _per_sec(len(states), elapsed_time)
     print("Generated %i start states in %s seconds (%.2f/second)" % (len(states), elapsed_time, states_per_sec))
 
 
@@ -115,7 +121,7 @@ def test_envenumerableacts(env: ActsEnum, states: List[State]) -> None:
     ave_tc: float = float(np.mean(flatten(tcs)[0]))
 
     elapsed_time = time.time() - start_time
-    states_per_sec = len(states) / elapsed_time
+    states_per_sec = _per_sec(len(states), elapsed_time)
     print(f"Expanded %i states, mean #next/tc: ({ave_next_states:.2f}/{ave_tc:.2f}), "
           f"in %s seconds (%.2f/second)" % (len(states), elapsed_time, states_per_sec))
 
@@ -154,7 +160,7 @@ def test_heur_nnet_par(heur_nnet_par: HeurNNetPar, states: List[State], goals: L
     else:
         raise ValueError(f"Unknown heur nnet class {heur_nnet_par}")
     elapsed_time = time.time() - start_time
-    states_per_sec = len(states) / elapsed_time
+    states_per_sec = _per_sec(len(states), elapsed_time)
     print("Converted %i states and goals to nnet format in "
           "%s seconds (%.2f/second)" % (len(states), elapsed_time, states_per_sec))
 
@@ -169,7 +175,7 @@ def test_heur_nnet_par(heur_nnet_par: HeurNNetPar, states: List[State], goals: L
     heur_fn_out(heur_nnet_par, heur_fn, states, goals, actions)
 
     nnet_time = time.time() - start_time
-    states_per_sec = len(states) / nnet_time
+    states_per_sec = _per_sec(len(states), nnet_time)
     print("Computed heuristic for %i states in %s seconds (%.2f/second)" % (len(states), nnet_time, states_per_sec))
 
 

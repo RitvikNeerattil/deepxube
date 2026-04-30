@@ -19,7 +19,7 @@ from deepxube.utils.command_line_utils import get_domain_from_arg, get_heur_nnet
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
-from matplotlib.widgets import Slider
+from matplotlib.widgets import Button, Slider
 from matplotlib.figure import Figure
 import pickle
 import textwrap
@@ -184,21 +184,8 @@ def viz(args: argparse.Namespace) -> None:
     else:
         if isinstance(domain, StringToAct):
             print(domain.string_to_action_help())
-            plt.show(block=False)
-            while True:
-                act_str = input("Write action (press enter to quit): ")
-                if len(act_str) == 0:
-                    break
-                action: Optional[Action] = domain.string_to_action(act_str)
-                if action is None:
-                    print(f"No action {act_str}")
-                else:
-                    states_next, tcs = domain.next_state([state], [action])
-                    state = states_next[0]
-                    tc: float = tcs[0]
-                    print(f"Transition cost: {tc}")
-                    print(f"Goal Reached: {domain.is_solved([state], [goal])[0]}")
-                    _viz_state_goal_update(cast(StateGoalVizable, domain), state, goal, fig)
+            print("Controls: click a numbered head, press arrow keys or buttons to move, number keys select heads, q closes.")
+            _viz_interactive_controls(cast(StateGoalVizable, domain), cast(StringToAct, domain), state, goal, fig)
         else:
             plt.show(block=True)
 
@@ -207,6 +194,88 @@ def _viz_state_goal_update(domain: StateGoalVizable, state: State, goal: Goal, f
     fig.clear()
     domain.visualize_state_goal(state, goal, fig)
     fig.canvas.draw()
+
+
+def _viz_interactive_controls(
+    domain_viz: StateGoalVizable,
+    domain_act: StringToAct,
+    state: State,
+    goal: Goal,
+    fig: Figure,
+) -> None:
+    state_box: Dict[str, State] = {"state": state}
+    control_cids: Dict[str, int] = {}
+
+    def attach_buttons() -> None:
+        button_specs: List[Tuple[str, str, Tuple[float, float, float, float]]] = [
+            ("Up", "up", (0.185, 0.070, 0.080, 0.040)),
+            ("Left", "left", (0.095, 0.020, 0.080, 0.040)),
+            ("Down", "down", (0.185, 0.020, 0.080, 0.040)),
+            ("Right", "right", (0.275, 0.020, 0.080, 0.040)),
+        ]
+        buttons: List[Button] = []
+        for label, act_str, rect in button_specs:
+            ax_button = fig.add_axes(rect)
+            button = Button(ax_button, label)
+            button.on_clicked(lambda _event, action_str=act_str: apply_action_str(action_str))
+            buttons.append(button)
+        setattr(fig, "_deepxube_viz_buttons", buttons)
+
+    def refresh() -> None:
+        _viz_state_goal_update(domain_viz, state_box["state"], goal, fig)
+        attach_buttons()
+        fig.canvas.draw_idle()
+
+    def apply_action_str(act_str: str) -> None:
+        action: Optional[Action] = domain_act.string_to_action(act_str)
+        if action is None:
+            viz_input_handled = getattr(domain_act, "viz_input_handled", None)
+            if callable(viz_input_handled) and viz_input_handled():
+                refresh()
+            else:
+                print(f"No action {act_str}")
+            return
+
+        selected_pos_fn = getattr(domain_act, "viz_selected_head_position", None)
+        selected_pos_before = selected_pos_fn(state_box["state"]) if callable(selected_pos_fn) else None
+        states_next, tcs = domain_act.next_state([state_box["state"]], [action])
+        selected_pos_after = selected_pos_fn(states_next[0]) if callable(selected_pos_fn) else None
+        state_box["state"] = states_next[0]
+        print(f"Transition cost: {tcs[0]}")
+        if selected_pos_before is not None and selected_pos_after == selected_pos_before:
+            print("Warning: selected head did not move; check selected choice and legal direction.")
+        print(f"Goal Reached: {domain_act.is_solved([state_box['state']], [goal])[0]}")
+        refresh()
+
+    def on_key(event: Any) -> None:
+        key = event.key
+        key_to_action = {
+            "up": "up",
+            "down": "down",
+            "left": "left",
+            "right": "right",
+        }
+        if key in key_to_action:
+            apply_action_str(key_to_action[key])
+        elif isinstance(key, str) and key.isdigit():
+            apply_action_str(key)
+        elif key in {"q", "escape"}:
+            plt.close(fig)
+
+    def on_click(event: Any) -> None:
+        viz_ax = getattr(domain_act, "_viz_ax_img", None)
+        if event.inaxes is not viz_ax:
+            return
+        select_head_at = getattr(domain_act, "viz_select_head_at", None)
+        if callable(select_head_at) and select_head_at(event.xdata, event.ydata):
+            refresh()
+
+    control_cids["key"] = fig.canvas.mpl_connect("key_press_event", on_key)
+    control_cids["click"] = fig.canvas.mpl_connect("button_press_event", on_click)
+    setattr(fig, "_deepxube_viz_control_cids", control_cids)
+
+    attach_buttons()
+    plt.show(block=True)
 
 
 def time_test_args(args: argparse.Namespace) -> None:
